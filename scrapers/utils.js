@@ -2,42 +2,38 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || 'c63bc2016325b258119cdf1a496bbcc9';
-
-function scraperUrl(url) {
-  return `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&render=false`;
-}
-
 async function fetchHTML(url, retries = 2) {
   for (let i = 0; i <= retries; i++) {
     try {
-      const response = await axios.get(scraperUrl(url), {
-        timeout: 30000,
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ja,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+        },
+        timeout: 15000,
         maxRedirects: 5,
       });
       return cheerio.load(response.data);
     } catch (err) {
       if (i === retries) throw err;
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
 }
 
 function parsePrice(str) {
   if (!str) return 0;
-  const cleaned = str.replace(/[^0-9]/g, '');
-  return parseInt(cleaned) || 0;
+  return parseInt(str.replace(/[^0-9]/g, '')) || 0;
 }
 
 function resolveImage(src, baseUrl) {
   if (!src) return null;
   if (src.startsWith('http')) return src;
   if (src.startsWith('//')) return 'https:' + src;
-  try {
-    return new URL(src, baseUrl).href;
-  } catch {
-    return null;
-  }
+  try { return new URL(src, baseUrl).href; } catch { return null; }
 }
 
 function normaliseCondition(raw) {
@@ -51,4 +47,4 @@ function normaliseCondition(raw) {
   return raw.trim();
 }
 
-module.exports = { fetchHTML, parsePrice, resolveImage, normaliseCondition, scraperUrl };
+module.exports = { fetchHTML, parsePrice, resolveImage, normaliseCondition };
