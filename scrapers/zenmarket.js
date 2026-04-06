@@ -4,8 +4,12 @@ const cheerio = require('cheerio');
 const BASE = 'https://zenmarket.jp';
 
 async function fetchZenmarket(url) {
-  const response = await axios.get(url, {
-    headers: {
+  const scraperUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&render=false`;
+  const response = await axios.get(scraperUrl, {
+    timeout: 30000,
+  });
+  return cheerio.load(response.data);
+}
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-GB,en;q=0.9',
