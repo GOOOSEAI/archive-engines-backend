@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const NodeCache = require('node-cache');
 const scrapeBuyee = require('../scrapers/buyee');
+const scrapeZenmarket = require('../scrapers/zenmarket');
 
 const cache = new NodeCache({ stdTTL: 1200 });
 
@@ -14,29 +15,43 @@ router.get('/', async (req, res) => {
   const cached = cache.get(cacheKey);
   if (cached) return res.json({ ...cached, fromCache: true });
 
-  try {
-    const listings = await scrapeBuyee({ query, maxPrice, page });
-    const filtered = maxPrice ? listings.filter(l => l.price <= parseInt(maxPrice)) : listings;
+  const scrapers = [
+    { id: 'buyee', fn: scrapeBuyee },
+    { id: 'zenmarket', fn: scrapeZenmarket },
+  ];
 
-    const result = {
-      query,
-      total: filtered.length,
-      page: parseInt(page),
-      platforms: [{ id: 'buyee', count: filtered.length, error: null }],
-      listings: filtered,
-      fromCache: false,
-      timestamp: new Date().toISOString()
-    };
-    cache.set(cacheKey, result);
-    res.json(result);
-  } catch (err) {
-    res.json({
-      query, total: 0, page: 1,
-      platforms: [{ id: 'buyee', count: 0, error: err.message }],
-      listings: [], fromCache: false,
-      timestamp: new Date().toISOString()
-    });
-  }
+  const results = await Promise.allSettled(
+    scrapers.map(s => s.fn({ query, maxPrice, page }))
+  );
+
+  const platforms = [];
+  let allListings = [];
+
+  results.forEach((result, i) => {
+    const { id } = scrapers[i];
+    if (result.status === 'fulfilled') {
+      const listings = maxPrice
+        ? result.value.filter(l => l.price <= parseInt(maxPrice))
+        : result.value;
+      allListings = allListings.concat(listings);
+      platforms.push({ id, count: listings.length, error: null });
+    } else {
+      platforms.push({ id, count: 0, error: result.reason?.message || 'failed' });
+    }
+  });
+
+  const response = {
+    query,
+    total: allListings.length,
+    page: parseInt(page),
+    platforms,
+    listings: allListings,
+    fromCache: false,
+    timestamp: new Date().toISOString()
+  };
+
+  cache.set(cacheKey, response);
+  res.json(response);
 });
 
 module.exports = router;
