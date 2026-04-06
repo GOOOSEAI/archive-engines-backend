@@ -2,23 +2,31 @@ const { fetchHTML } = require('./utils');
 const BASE = 'https://buyee.jp';
 
 module.exports = async function scrapeBuyee({ query, maxPrice, page = 1 }) {
-  const url = `${BASE}/item/search?query=${encodeURIComponent(query)}&page=${page}`;
+  const url = `${BASE}/item/search?query=${encodeURIComponent(query)}&page=${page}${maxPrice ? `&maxPrice=${maxPrice}` : ''}`;
   const $ = await fetchHTML(url);
-  
-  // Debug: count how many elements we can find
-  const allDivs = $('div').length;
-  const itemCards = $('.itemCard__itemInfo').length;
-  const bodyText = $('body').text().slice(0, 200);
-  
-  return [{
-    id: 'debug',
-    platform: 'buyee',
-    platformName: 'Buyee DEBUG',
-    title: `divs:${allDivs} itemCards:${itemCards} body:${bodyText}`,
-    price: 1,
-    currency: 'JPY',
-    image: null,
-    link: url,
-    condition: 'Unknown'
-  }];
+  const listings = [];
+
+  $('.itemCard__itemInfo').each((_, el) => {
+    try {
+      const $el = $(el);
+      const titleEl = $el.find('a').first();
+      const title = titleEl.text().trim();
+      const href = titleEl.attr('href');
+      const link = href ? (href.startsWith('http') ? href : BASE + href) : null;
+      const priceText = $el.find('.g-price').first().text().trim();
+      const nums = priceText.match(/[\d,]+/g) || [];
+      const price = nums.length > 0 ? parseInt(nums[0].replace(/,/g, '')) : 0;
+      const image = null;
+      if (title && title.length > 3 && link) {
+        listings.push({
+          id: `buyee_${Buffer.from(link).toString('base64').slice(0, 12)}`,
+          platform: 'buyee',
+          platformName: 'Buyee',
+          title, price: price || 1, currency: 'JPY', image, link, condition: 'Unknown'
+        });
+      }
+    } catch (e) {}
+  });
+
+  return listings;
 };
