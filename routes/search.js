@@ -1,88 +1,66 @@
 const express = require('express');
 const router = express.Router();
 const NodeCache = require('node-cache');
-const scrapeBuyee = require('../scrapers/buyee');
-const scrapeZenmarket = require('../scrapers/zenmarket');
-const scrapeFromJapan = require('../scrapers/fromjapan');
-const scrapeDejapan = require('../scrapers/dejapan');
-const scrapeJauce = require('../scrapers/jauce');
-const scrapeRemambo = require('../scrapers/remambo');
+const axios = require('axios');
 
-// Cache results for 20 minutes to avoid hammering proxy sites
 const cache = new NodeCache({ stdTTL: 1200 });
 
-// All available scrapers
-const SCRAPERS = {
-  buyee: scrapeBuyee,
-  zenmarket: scrapeZenmarket,
-  fromjapan: scrapeFromJapan,
-  dejapan: scrapeDejapan,
-  jauce: scrapeJauce,
-  remambo: scrapeRemambo,
-};
-
-// GET /api/search?q=yohji+yamamoto&platforms=buyee,zenmarket&maxPrice=20000&page=1
 router.get('/', async (req, res) => {
-  const { q, platforms, maxPrice, page = 1 } = req.query;
-
-  if (!q || q.trim().length < 2) {
-    return res.status(400).json({ error: 'Query too short' });
-  }
+  const { q, maxPrice, page = 1 } = req.query;
+  if (!q || q.trim().length < 2) return res.status(400).json({ error: 'Query too short' });
 
   const query = q.trim();
-  const requestedPlatforms = platforms
-    ? platforms.split(',').filter(p => SCRAPERS[p])
-    : Object.keys(SCRAPERS);
-
-  const cacheKey = `${query}__${requestedPlatforms.join(',')}__${maxPrice || 'any'}__${page}`;
+  const cacheKey = query + '_' + (maxPrice||'any') + '_' + page;
   const cached = cache.get(cacheKey);
-  if (cached) {
-    return res.json({ ...cached, fromCache: true });
+  if (cached) return res.json({ ...cached, fromCache: true });
+
+  try {
+    const response = await axios.get('https://api.mercari.jp/v2/entities:search', {
+      params: {
+        page_token: '',
+        search_condition: JSON.stringify({
+          keyword: query,
+          status: ['STATUS_ON_SALE'],
+        }),
+        limit: 30,
+      },
+      headers: {
+        'X-Platform': 'web',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    const items = response.data?.items || [];
+    const listings = items.map(item => ({
+      id: 'mercari_' + item.id,
+      platform: 'mercari',
+      platformName: 'Mercari Japan',
+      title: item.name,
+      price: item.price,
+      currency: 'JPY',
+      image: item.thumbnails?.[0] || null,
+      link: 'https://jp.mercari.com/item/' + item.id,
+      condition: item.item_condition?.name || 'Unknown',
+    }));
+
+    const result = {
+      query, total: listings.length, page: parseInt(page),
+      platforms: [{ id: 'mercari', count: listings.length, error: null }],
+      listings, fromCache: false,
+      timestamp: new Date().toISOString()
+    };
+    cache.set(cacheKey, result);
+    res.json(result);
+  } catch(err) {
+    res.json({
+      query, total: 0, page: 1,
+      platforms: [{ id: 'mercari', count: 0, error: err.message }],
+      listings: [], fromCache: false,
+      timestamp: new Date().toISOString()
+    });
   }
-
-  // Run all scrapers in parallel, don't let one failure kill everything
-  const results = await Promise.allSettled(
-    requestedPlatforms.map(platform =>
-      runScraper(SCRAPERS[platform], { query, maxPrice, page })
-        .then(listings => ({ platform, listings, error: null }))
-        .catch(err => ({ platform, listings: [], error: err.message }))
-    )
-  );
-
-  const platformResults = results.map(r => r.value || r.reason);
-
-  // Merge all listings into one flat array, sorted by price ascending
-  const allListings = platformResults
-    .flatMap(r => r.listings || [])
-    .filter(l => !maxPrice || l.price <= parseInt(maxPrice))
-    .sort((a, b) => a.price - b.price);
-
-  const response = {
-    query,
-    total: allListings.length,
-    page: parseInt(page),
-    platforms: platformResults.map(r => ({
-      id: r.platform,
-      count: r.listings?.length || 0,
-      error: r.error || null
-    })),
-    listings: allListings,
-    fromCache: false,
-    timestamp: new Date().toISOString()
-  };
-
-  cache.set(cacheKey, response);
-  res.json(response);
 });
-
-async function runScraper(scraper, options) {
-  // Timeout each scraper after 12 seconds
-  return Promise.race([
-    scraper(options),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Scraper timeout')), 12000)
-    )
-  ]);
-}
 
 module.exports = router;

@@ -8,18 +8,30 @@ module.exports = async function scrapeBuyee({ query, maxPrice, page = 1 }) {
 
   const listings = [];
 
-  // Buyee search result items
   $('.itemCard, .search-result-item, [class*="itemCard"]').each((_, el) => {
     try {
       const $el = $(el);
 
       const title = $el.find('[class*="itemCard__itemName"], .itemName, h3').first().text().trim();
-      const priceText = $el.find('[class*="itemCard__price"], .price, [class*="price"]').first().text().trim();
-      const price = parsePrice(priceText);
-      const imgSrc = $el.find('img').first().attr('src') || $el.find('img').first().attr('data-src');
-      const image = resolveImage(imgSrc, BASE);
+      
+      // Get only the current price, not buyout price
+      const priceRaw = $el.find('[class*="itemCard__price"], .price').first().text().trim();
+const allNumbers = priceRaw.match(/[\d,]+/g) || [];
+const price = allNumbers.length > 0 ? parseInt(allNumbers[0].replace(/,/g, '')) : 0;      // Try multiple image attributes for lazy-loaded images
+      const imgEl = $el.find('img').first();
+      const imgSrc = imgEl.attr('data-src') || 
+                     imgEl.attr('data-lazy') || 
+                     imgEl.attr('data-original') ||
+                     imgEl.attr('src');
+      const image = imgSrc && !imgSrc.includes('spacer') ? resolveImage(imgSrc, BASE) : null;
+
       const href = $el.find('a').first().attr('href');
       const link = href ? (href.startsWith('http') ? href : BASE + href) : null;
+// Extract item ID and construct thumbnail URL
+const itemIdMatch = link ? link.match(/auction\/([a-z0-9]+)/) : null;
+const image = itemIdMatch 
+  ? `https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0504/users/${itemIdMatch[1]}/i-img600x600.jpg`
+  : null;
       const conditionText = $el.find('[class*="condition"], [class*="grade"]').first().text().trim();
       const condition = normaliseCondition(conditionText);
 
@@ -34,12 +46,9 @@ module.exports = async function scrapeBuyee({ query, maxPrice, page = 1 }) {
           image,
           link,
           condition,
-          raw: { priceText, conditionText }
         });
       }
-    } catch (e) {
-      // Skip malformed listing
-    }
+    } catch (e) {}
   });
 
   return listings;
